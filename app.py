@@ -20,10 +20,16 @@ import metrics
 from data_loader import (
     CDI_RETORNO_ANUAL,
     calcular_serie_valor_carteira,
-    carregar_benchmarks,
-    carregar_precos_ativos,
+    carregar_todos_os_dados,
     montar_tabela_posicoes,
 )
+
+# Rotulos legiveis para a fonte de cada bloco de dados, exibidos no topo do dashboard
+ROTULO_FONTE = {
+    "yfinance": "🟢 dados reais (yfinance)",
+    "cache_local": "🟡 cache local (ultima atualizacao bem-sucedida)",
+    "simulado": "🔴 simulado (sem internet e sem cache local)",
+}
 
 # Paleta de cores fixa do projeto (categorica + status), para manter
 # consistencia visual entre todos os graficos do dashboard
@@ -46,22 +52,34 @@ st.set_page_config(
 )
 
 
-@st.cache_data
+@st.cache_data(ttl=1800)
 def carregar_dados():
-    """Carrega os dados da carteira e dos benchmarks (com cache do Streamlit)."""
-    precos_ativos = carregar_precos_ativos()
-    benchmarks = carregar_benchmarks()
+    """
+    Carrega os dados da carteira e dos benchmarks (com cache do Streamlit por
+    30 minutos, para nao bater na API do yfinance a cada interacao na tela).
+    """
+    precos_ativos, benchmarks, fontes = carregar_todos_os_dados()
     tabela_posicoes = montar_tabela_posicoes(precos_ativos)
     serie_valor_carteira = calcular_serie_valor_carteira(precos_ativos)
-    return precos_ativos, benchmarks, tabela_posicoes, serie_valor_carteira
+    return precos_ativos, benchmarks, tabela_posicoes, serie_valor_carteira, fontes
 
 
-precos_ativos, benchmarks, tabela_posicoes, serie_valor_carteira = carregar_dados()
+coluna_titulo, coluna_botao = st.columns([5, 1])
+with coluna_titulo:
+    st.title("📊 Dashboard de Carteira de Investimentos")
+with coluna_botao:
+    st.write("")
+    if st.button("🔄 Atualizar cotacoes"):
+        carregar_dados.clear()
+        st.rerun()
 
-st.title("📊 Dashboard de Carteira de Investimentos")
+precos_ativos, benchmarks, tabela_posicoes, serie_valor_carteira, fontes = carregar_dados()
+
 st.caption(
-    "Carteira simulada para fins de portfolio de Analise de Dados - "
-    "dados 100% simulados (nao constitui recomendacao de investimento)."
+    f"Acoes da B3: {ROTULO_FONTE[fontes['acoes']]} · "
+    f"Ibovespa: {ROTULO_FONTE[fontes['ibovespa']]} · "
+    "Fundos, Tesouro Selic e CDI: simulados (nao ha ticker publico para eles nesta carteira "
+    "fictícia). Projeto de portfolio — nao constitui recomendacao de investimento."
 )
 
 aba_visao_geral, aba_rentabilidade, aba_risco, aba_detalhamento = st.tabs(

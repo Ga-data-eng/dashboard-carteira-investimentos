@@ -1,9 +1,9 @@
 # Dashboard de Carteira de Investimentos
 
-Dashboard interativo que simula uma carteira de investimentos diversificada (ações da B3, fundos
-e renda fixa) e apresenta métricas de rentabilidade, risco e alocação — projeto de portfólio
-construído durante minha transição do mercado financeiro (CPA-10, CPA-20, CEA) para Análise de
-Dados.
+Dashboard interativo de uma carteira de investimentos diversificada (ações da B3 com cotação
+real via yfinance, fundos e renda fixa simulados) que apresenta métricas de rentabilidade, risco
+e alocação — projeto de portfólio construído durante minha transição do mercado financeiro
+(CPA-10, CPA-20, CEA) para Análise de Dados.
 
 ## Objetivo
 
@@ -38,19 +38,30 @@ decisão** — o mesmo raciocínio usado numa mesa de investimentos, agora em Py
 
 ## Sobre os dados
 
-Este projeto usa **dados 100% simulados** (nenhuma chamada a API externa de cotações). A carteira
-fictícia tem:
+A carteira fictícia tem:
 
-- 5 ações da B3: PETR4, VALE3, ITUB4, WEGE3, BBAS3
-- 2 fundos de investimento: Fundo Multimercado e Fundo de Ações Global
-- 1 posição de renda fixa: Tesouro Selic (rentabilidade atrelada ao CDI)
-- Pesos de alocação diferentes entre os ativos (ver `data_loader.py`)
+- 5 ações da B3 (**dados reais**, via `yfinance`): PETR4, VALE3, ITUB4, WEGE3, BBAS3
+- Índice **Ibovespa** (**dados reais**, via `yfinance`, ticker `^BVSP`), usado como benchmark
+- 2 fundos de investimento simulados: Fundo Multimercado e Fundo de Ações Global
+- 1 posição de renda fixa simulada: Tesouro Selic (rentabilidade atrelada ao CDI)
+- CDI simulado como benchmark (não há fonte gratuita via yfinance; ver melhorias futuras)
+- Pesos de alocação diferentes entre os ativos (ver `data_loader.py`), convertidos em quantidade
+  de cada ativo a partir de um valor total investido hipotético, de forma que a alocação bata
+  exatamente com o peso-alvo no primeiro dia do histórico
 
-Os preços são gerados com **Movimento Browniano Geométrico** (GBM) — o modelo clássico para
-simular séries de preços de ativos financeiros, com retorno esperado (drift) e volatilidade
-próprios de cada ativo. CDI e Ibovespa são simulados como benchmark de comparação. Os dados
-gerados são cacheados em CSV na pasta `data/` (ignorada pelo Git) para que a carteira não mude a
-cada vez que o dashboard é recarregado.
+Fundos e renda fixa são gerados com **Movimento Browniano Geométrico** (GBM) — o modelo clássico
+para simular séries de preços financeiros, com retorno esperado (drift) e volatilidade próprios
+de cada ativo — porque não existe ticker público para uma carteira fictícia de fundos.
+
+**Tratamento de erro em 3 níveis** para os dados reais (ações e Ibovespa), do mais para o menos
+confiável:
+1. Busca ao vivo na API do `yfinance`
+2. Se falhar (sem internet, API fora do ar), usa o último CSV salvo em cache em `data/`
+3. Se não houver cache nenhum, gera uma série simulada via GBM como último recurso
+
+O dashboard mostra no topo, de forma transparente, qual dessas 3 fontes foi usada em cada
+carregamento. Um botão "Atualizar cotações" força uma nova busca (por padrão, os dados ficam em
+cache por 30 minutos para não sobrecarregar a API a cada interação na tela).
 
 ## Stack técnica
 
@@ -58,15 +69,16 @@ cada vez que o dashboard é recarregado.
 - [Streamlit](https://streamlit.io/) para o dashboard interativo
 - [pandas](https://pandas.pydata.org/) e [NumPy](https://numpy.org/) para manipulação de dados
 - [Plotly](https://plotly.com/python/) para os gráficos interativos
+- [yfinance](https://github.com/ranaroussi/yfinance) para cotações reais de ações da B3 e do Ibovespa
 
 ## Estrutura do projeto
 
 ```
 dashboard-carteira-investimentos/
 ├── app.py            # interface Streamlit (as 4 abas do dashboard)
-├── data_loader.py     # geração/cache dos dados simulados da carteira e benchmarks
+├── data_loader.py     # busca (yfinance) + simulação + cache dos dados da carteira e benchmarks
 ├── metrics.py         # cálculos de rentabilidade e risco
-├── data/               # cache dos CSVs gerados (criado automaticamente, ignorado pelo Git)
+├── data/               # cache dos CSVs (real ou simulado, conforme o fallback) - ignorado pelo Git
 ├── docs/screenshots/   # prints do dashboard para este README
 ├── requirements.txt
 └── .gitignore
@@ -95,16 +107,23 @@ O dashboard abre em `http://localhost:8501`.
 
 ## Principais decisões técnicas
 
-- **Dados 100% simulados, sem dependência de API externa.** Prioriza reprodutibilidade: qualquer
-  pessoa clona o repositório e o dashboard funciona offline, sem chave de API nem risco de rate
-  limit. As séries de preço usam uma semente (`seed`) fixa, então a carteira é sempre a mesma entre
-  execuções — importante para poder discutir os números em uma entrevista.
-- **Movimento Browniano Geométrico (GBM)** em vez de números aleatórios simples, para gerar séries
-  de preços com propriedades estatísticas realistas (retornos log-normais, volatilidade
-  configurável por ativo).
-- **Cache em CSV na pasta `data/`** com fallback automático: se o arquivo não existir ou estiver
-  corrompido, os dados são regenerados e salvos novamente — é o "tratamento de erro" do projeto,
-  já que não há uma API externa que possa falhar.
+- **Dados reais de mercado (ações e Ibovespa) com fallback em 3 níveis.** yfinance ao vivo → cache
+  local em CSV → simulação via GBM. O dashboard nunca quebra por falta de internet ou instabilidade
+  da API, e sempre deixa explícito qual fonte foi usada.
+- **`threads=False` nas chamadas ao yfinance.** Ao testar, o download simultâneo de múltiplos
+  tickers (`threads=True`, padrão da biblioteca) esbarrava intermitentemente num bug conhecido de
+  "database is locked" no cache SQLite interno do yfinance. Desativar o paralelismo eliminou o
+  problema, ao custo de um download levemente mais lento.
+- **Fundos e renda fixa continuam simulados via Movimento Browniano Geométrico (GBM)** — não existe
+  ticker público para uma carteira fictícia de fundos. O CDI também é simulado, como taxa composta
+  diária, pela mesma razão (não há fonte gratuita de CDI real no yfinance).
+- **Quantidade de cada ativo calculada a partir do peso-alvo**, e não fixada no código: dado um
+  valor total investido hipotético, a quantidade comprada de cada ativo é `peso_alvo × valor_total
+  / preço no primeiro dia do histórico`. Isso evita que os pesos-alvo definidos em `data_loader.py`
+  fiquem desalinhados do preço real de mercado, que muda a cada atualização.
+- **Cache do Streamlit com TTL de 30 minutos** (`st.cache_data(ttl=1800)`) mais um botão manual de
+  atualização, para equilibrar dados atualizados com não sobrecarregar a API a cada interação na
+  tela.
 - **Separação em módulos** (`data_loader.py` para dados, `metrics.py` para os cálculos,
   `app.py` só para a interface) em vez de um único script, para isolar a lógica de negócio da
   camada de apresentação — mais fácil de testar e de explicar em entrevista.
@@ -113,18 +132,17 @@ O dashboard abre em `http://localhost:8501`.
 
 ## Possíveis melhorias futuras
 
-- Adicionar suporte a dados reais via `yfinance` como opção alternativa (a estrutura de
-  `data_loader.py` já isola a origem dos dados, então trocar a simulação por uma chamada real é
-  uma mudança localizada).
-- Buscar CDI e Ibovespa históricos reais via Banco Central (`python-bcb`) ou B3, em vez de
-  simulados.
-- Permitir editar a composição da carteira (ativos, pesos, quantidades) pela própria interface,
+- Buscar o CDI histórico real via Banco Central (`python-bcb`), em vez de simulado — hoje é o único
+  benchmark ainda simulado.
+- Simular os fundos com uma metodologia mais próxima de fundos reais (ex.: replicar a
+  volatilidade/correlação de um índice de referência, em vez de GBM puro).
+- Permitir editar a composição da carteira (ativos, pesos, valor investido) pela própria interface,
   em vez de fixa no código.
 - Adicionar métricas adicionais: Sortino Ratio, Value at Risk (VaR), correlação entre ativos.
 - Deploy no [Streamlit Community Cloud](https://streamlit.io/cloud) para acesso sem rodar
-  localmente.
+  localmente (checar se o ambiente de deploy tem acesso de saída à API do Yahoo Finance).
 
 ## Aviso
 
-Projeto **educacional e de portfólio**. Os dados são simulados e não constituem recomendação de
-investimento.
+Projeto **educacional e de portfólio**. As quantidades e o valor total investido são fictícios; os
+preços das ações e do Ibovespa são reais, mas isso não constitui recomendação de investimento.
